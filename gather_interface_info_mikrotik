@@ -1,0 +1,36 @@
+---
+- name: Gather firewall rules using RouterOS API
+  hosts: mikrotik-router
+  gather_facts: no
+  connection: network_cli
+
+  tasks:
+    - name: Get firewall filter rules
+      community.network.routeros_command:
+        commands:
+          - /ip/firewall/filter/print
+      register: firewall_filter
+
+    - name: Get firewall NAT rules
+      community.network.routeros_command:
+        commands:
+          - /ip/firewall/nat/print
+      register: firewall_nat
+
+    - name: Get firewall mangle rules
+      routeros_command:
+        commands:
+          - /ip/firewall/mangle/print
+      register: firewall_mangle
+
+    - name: Show firewall filter rules
+      debug:
+        var: firewall_filter.stdout
+
+    - name: Show firewall NAT rules
+      debug:
+        var: firewall_nat.stdout
+
+    - name: Show firewall mangle rules
+      debug:
+        var: firewall_mangle.stdout

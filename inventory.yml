@@ -1,0 +1,6 @@
+all:
+  hosts:
+    mikrotik-router:
+      ansible_host: router.echopower.net
+      ansible_network_os: community.network.routeros
+      ansible_connection: network_cli
