@@ -11,6 +11,8 @@ Alma-Servers:
       ansible_host: ansible.echopower.net
     lab:
       ansible_host: lab.echopower.net
+    DNS:
+      ansible_host: bind.echopower.net
 passbolt:
   hosts:
     passbolt:
