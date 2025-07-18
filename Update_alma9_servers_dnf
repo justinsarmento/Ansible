@@ -1,0 +1,16 @@
+---
+- name: Update all packages on AlmaLinux 9
+  hosts: Alma-Servers
+  become: yes
+  tasks:
+    - name: Ensure all packages are up-to-date
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest
+
+    - name: Reboot if needed after updates
+      ansible.builtin.reboot:
+        msg: "Rebooting after updates"
+        connect_timeout: 5
+        reboot_timeout: 600
+      when: ansible_facts['os_family'] == "RedHat"
