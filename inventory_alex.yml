@@ -1,0 +1,21 @@
+all:
+Network:
+  hosts:
+    mikrotik-router:
+      ansible_host: 192.168.1.25
+      ansible_network_os: community.network.routeros
+      ansible_connection: network_cli
+Alma-Servers:
+  hosts:
+    Ansible-lab:
+      ansible_host: ansible.echopower.net
+    lab:
+      ansible_host: lab.echopower.net
+    DNS:
+      ansible_host: bind.echopower.net
+    Justin-dev:
+      ansible_host: 127.0.0.1
+passbolt:
+  hosts:
+    passbolt:
+      ansible_host: passbolt.echopower.net

@@ -2,6 +2,8 @@
 - name: Update all packages on AlmaLinux 9
   hosts: Alma-Servers
   become: yes
+
+  
   tasks:
     - name: Ensure all packages are up-to-date
       ansible.builtin.dnf:
