@@ -1,19 +1,47 @@
+# inventory.yml
+# This file defines the hosts that Ansible will manage.
+# We group them by operating system for easier targeting.
+# Place holder IP and MAC values
+
 all:
-Network:
-  hosts:
-    mikrotik-router:
-      ansible_host: router.echopower.net
-      ansible_network_os: community.network.routeros
-      ansible_connection: network_cli
-Alma-Servers:
-  hosts:
-    Ansible-lab:
-      ansible_host: ansible.echopower.net
-    lab:
-      ansible_host: lab.echopower.net
-    DNS:
-      ansible_host: bind.echopower.net
-passbolt:
-  hosts:
-    passbolt:
-      ansible_host: passbolt.echopower.net
+  children:
+    windows:
+      hosts:
+        win10-pc:
+          ansible_host: 192.168.1.10
+          # MAC address is required for Wake-on-LAN
+          mac_address: "00:11:22:33:44:55"
+        win11-laptop:
+          ansible_host: 192.168.1.11
+          mac_address: "AA:BB:CC:DD:EE:FF"
+      vars:
+        # Connection variables for all Windows hosts
+        ansible_user: your_windows_user
+        ansible_password: your_windows_password
+        ansible_connection: winrm
+        ansible_winrm_server_cert_validation: ignore
+
+    linux:
+      hosts:
+        almalinux-server:
+          ansible_host: 192.168.1.20
+          # MAC address is required for Wake-on-LAN
+          mac_address: "A1:B2:C3:D4:E5:F6"
+      vars:
+        # Connection variables for all Linux hosts
+        ansible_user: your_linux_user
+        ansible_ssh_pass: your_linux_password
+        ansible_become_pass: your_linux_password
+        ansible_connection: ssh
+    
+    mikrotik:
+      hosts:
+        mikrotik-router:
+          ansible_host: 192.168.1.1
+      vars:
+        # Connection variables for RouterOS devices
+        ansible_user: your_routeros_user
+        ansible_password: your_routeros_password
+        ansible_network_os: community.routeros.routeros
+        ansible_connection: network_cli
+
