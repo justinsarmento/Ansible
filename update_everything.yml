@@ -1,116 +1,141 @@
 # update_playbook.yml
 # This playbook checks host accessibility, wakes them if necessary,
-# and performs system updates for Windows and Almalinux.
+# performs system updates for all devices, and sends a consolidated report.
 
-- name: Check hosts and perform updates
+- name: Update All Systems and Send Report
   hosts: all
-  gather_facts: no # We'll gather facts later, after ensuring hosts are online
+  gather_facts: no # We control fact gathering manually
 
-  tasks:
-    - name: 1. Check if Windows hosts are reachable
-      when: ansible_os_family == "Windows"
-      ansible.windows.win_ping:
-      register: win_ping_result
-      ignore_errors: true
-
-    - name: 1. Check if Linux hosts are reachable
-      when: ansible_os_family != "Windows"
-      ansible.builtin.ping:
-      register: linux_ping_result
-      ignore_errors: true
-
-    - name: 2. Combine ping results
-      ansible.builtin.set_fact:
-        ping_failed: "{{ win_ping_result.failed | default(false) or linux_ping_result.failed | default(false) }}"
-
-    # This block runs only if the initial ping failed
-    - name: 3. Attempt to wake offline hosts
-      when: ping_failed
-      block:
-        - name: Send Wake-on-LAN magic packet
-          community.general.wakeonlan:
-            mac: "{{ mac_address }}"
-            broadcast: 192.168.1.255
-          delegate_to: localhost # WoL packet must be sent from the control node
-          # We check for mac_address to avoid errors on hosts without it
-          when: mac_address is defined
-
-        - name: Wait for the host to boot up (up to 5 minutes)
-          ansible.builtin.wait_for_connection:
-            delay: 30 # Initial delay before first check
-            timeout: 300 # Total time to wait
-
-- name: Perform System Updates and Send Report
-  hosts: all
-  # Now we gather facts from the (hopefully) online hosts
-  gather_facts: yes
-
-  # We wrap the main tasks in a block/always structure
-  # to ensure the email report is always sent.
+  # This block contains the main operational tasks
   block:
-    - name: Update Almalinux systems with DNF
+    - name: 1. Check if Windows/Linux hosts are reachable and wake if needed
+      when: inventory_hostname in groups['windows'] or inventory_hostname in groups['linux']
+      block:
+        - name: Check if Windows hosts are reachable
+          when: inventory_hostname in groups['windows']
+          ansible.windows.win_ping:
+          register: win_ping_result
+          ignore_errors: true
+
+        - name: Check if Linux hosts are reachable
+          when: inventory_hostname in groups['linux']
+          ansible.builtin.ping:
+          register: linux_ping_result
+          ignore_errors: true
+
+        - name: Combine ping results
+          ansible.builtin.set_fact:
+            ping_failed: "{{ win_ping_result.failed | default(false) or linux_ping_result.failed | default(false) }}"
+
+        - name: Attempt to wake offline hosts
+          when: ping_failed
+          block:
+            - name: Send Wake-on-LAN magic packet
+              community.general.wakeonlan:
+                mac: "{{ mac_address }}"
+                broadcast: 192.168.1.255
+              delegate_to: localhost
+              when: mac_address is defined
+
+            - name: Wait for the host to boot up
+              ansible.builtin.wait_for_connection:
+                delay: 30
+                timeout: 300
+
+    - name: 2. Gather facts from all hosts now that they should be online
+      ansible.builtin.setup:
+
+    - name: 3. Update Almalinux systems with DNF
       when: ansible_os_family == "RedHat"
-      become: true # Requires root privileges
+      become: true
       ansible.builtin.dnf:
         name: "*"
         state: latest
         update_cache: yes
 
-    - name: Update Windows systems (Critical and Security updates)
+    - name: 4. Update Windows systems
       when: ansible_os_family == "Windows"
-      become: true # Requires Administrator privileges
+      become: true
       become_method: runas
       ansible.windows.win_updates:
         category_names:
           - SecurityUpdates
           - CriticalUpdates
-        reboot: yes # Automatically reboot if required by an update
+        reboot: yes
       register: windows_update_result
 
-    - name: Display Windows update results
-      when: ansible_os_family == "Windows"
-      ansible.builtin.debug:
-        var: windows_update_result
+    - name: 5. Update MikroTik RouterOS
+      when: inventory_hostname in groups['mikrotik']
+      block:
+        - name: Set update channel to 'stable'
+          community.routeros.command:
+            commands: /system/package/update/set channel=stable
+          changed_when: false # This command doesn't indicate a change in the traditional sense
 
+        - name: Check for RouterOS updates on the stable channel
+          community.routeros.command:
+            commands: /system/package/update/check-for-updates
+          register: routeros_update_check
+          changed_when: "'new-version-available' in routeros_update_check.stdout[0]"
+
+        - name: Download RouterOS updates if available
+          when: routeros_update_check.changed
+          community.routeros.command:
+            commands: /system/package/update/download
+          register: routeros_download_result
+          changed_when: "'downloading' in routeros_download_result.stdout[0]"
+
+  # This 'always' block ensures the email report is sent regardless of task failures
   always:
-    - name: Send completion email report
-      # This task runs only once from the control node
+    - name: 6. Send consolidated completion email report
       run_once: true
       delegate_to: localhost
       community.general.mail:
-        # -- SMTP Server Configuration --
         host: "{{ smtp_server }}"
         port: "{{ smtp_port }}"
         username: "{{ email_user }}"
         password: "{{ email_password }}"
-        # -- Email Details --
         to: "{{ email_to }}"
         from: "{{ email_from }}"
-        subject: "Ansible Update Report: {{ ansible_date_time.date }}"
+        subject: "Ansible Full System Update Report: {{ ansible_date_time.date }}"
         body: |
           Ansible playbook execution finished.
 
-          --- Summary ---
-          Total hosts: {{ ansible_play_hosts_all | length }}
-          Succeeded: {{ ansible_play_hosts_ok | length }}
-          Failed: {{ ansible_play_hosts_failed | length }}
+          --- PC & Server Summary ---
+          Total hosts: {{ (groups['windows'] + groups['linux']) | length }}
+          Succeeded: {{ ansible_play_hosts_ok | intersect(groups['windows'] + groups['linux']) | length }}
+          Failed: {{ ansible_play_hosts_failed | intersect(groups['windows'] + groups['linux']) | length }}
 
           --- Succeeded Hosts ---
-          {% for host in ansible_play_hosts_ok %}
+          {% for host in ansible_play_hosts_ok | intersect(groups['windows'] + groups['linux']) %}
           - {{ host }}
           {% endfor %}
 
           --- Failed Hosts ---
-          {% for host in ansible_play_hosts_failed %}
+          {% for host in ansible_play_hosts_failed | intersect(groups['windows'] + groups['linux']) %}
           - {{ host }}
           {% endfor %}
 
-      # These variables should be defined in your inventory, a vars file,
-      # or passed on the command line.
+          --- MikroTik Router Summary ---
+          {% for host in groups['mikrotik'] %}
+          Host: {{ host }}
+          {% if hostvars[host].routeros_update_check is defined %}
+            {% if hostvars[host].routeros_update_check.changed %}
+          Status: Update downloaded and is pending a manual reboot.
+            {% else %}
+          Status: No updates were available on the stable channel.
+            {% endif %}
+          {% elif host in ansible_play_hosts_failed %}
+          Status: Update check/download failed or host was unreachable.
+          {% else %}
+          Status: Not processed.
+          {% endif %}
+          {% endfor %}
+
       vars:
-        smtp_server: "smtp.example.com"
+        smtp_server: "smtp.gmail.com"
         smtp_port: 587
-        email_user: "ansible@example.com"
-        email_password: "YourEmailPassword"
+        email_user: "your-email@gmail.com"
+        email_password: "your-16-character-app-password"
         email_to: "admin@example.com"
         email_from: "ansible-reporter@example.com"
