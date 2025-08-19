@@ -1,0 +1,116 @@
+# update_playbook.yml
+# This playbook checks host accessibility, wakes them if necessary,
+# and performs system updates for Windows and Almalinux.
+
+- name: Check hosts and perform updates
+  hosts: all
+  gather_facts: no # We'll gather facts later, after ensuring hosts are online
+
+  tasks:
+    - name: 1. Check if Windows hosts are reachable
+      when: ansible_os_family == "Windows"
+      ansible.windows.win_ping:
+      register: win_ping_result
+      ignore_errors: true
+
+    - name: 1. Check if Linux hosts are reachable
+      when: ansible_os_family != "Windows"
+      ansible.builtin.ping:
+      register: linux_ping_result
+      ignore_errors: true
+
+    - name: 2. Combine ping results
+      ansible.builtin.set_fact:
+        ping_failed: "{{ win_ping_result.failed | default(false) or linux_ping_result.failed | default(false) }}"
+
+    # This block runs only if the initial ping failed
+    - name: 3. Attempt to wake offline hosts
+      when: ping_failed
+      block:
+        - name: Send Wake-on-LAN magic packet
+          community.general.wakeonlan:
+            mac: "{{ mac_address }}"
+            broadcast: 192.168.1.255
+          delegate_to: localhost # WoL packet must be sent from the control node
+          # We check for mac_address to avoid errors on hosts without it
+          when: mac_address is defined
+
+        - name: Wait for the host to boot up (up to 5 minutes)
+          ansible.builtin.wait_for_connection:
+            delay: 30 # Initial delay before first check
+            timeout: 300 # Total time to wait
+
+- name: Perform System Updates and Send Report
+  hosts: all
+  # Now we gather facts from the (hopefully) online hosts
+  gather_facts: yes
+
+  # We wrap the main tasks in a block/always structure
+  # to ensure the email report is always sent.
+  block:
+    - name: Update Almalinux systems with DNF
+      when: ansible_os_family == "RedHat"
+      become: true # Requires root privileges
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest
+        update_cache: yes
+
+    - name: Update Windows systems (Critical and Security updates)
+      when: ansible_os_family == "Windows"
+      become: true # Requires Administrator privileges
+      become_method: runas
+      ansible.windows.win_updates:
+        category_names:
+          - SecurityUpdates
+          - CriticalUpdates
+        reboot: yes # Automatically reboot if required by an update
+      register: windows_update_result
+
+    - name: Display Windows update results
+      when: ansible_os_family == "Windows"
+      ansible.builtin.debug:
+        var: windows_update_result
+
+  always:
+    - name: Send completion email report
+      # This task runs only once from the control node
+      run_once: true
+      delegate_to: localhost
+      community.general.mail:
+        # -- SMTP Server Configuration --
+        host: "{{ smtp_server }}"
+        port: "{{ smtp_port }}"
+        username: "{{ email_user }}"
+        password: "{{ email_password }}"
+        # -- Email Details --
+        to: "{{ email_to }}"
+        from: "{{ email_from }}"
+        subject: "Ansible Update Report: {{ ansible_date_time.date }}"
+        body: |
+          Ansible playbook execution finished.
+
+          --- Summary ---
+          Total hosts: {{ ansible_play_hosts_all | length }}
+          Succeeded: {{ ansible_play_hosts_ok | length }}
+          Failed: {{ ansible_play_hosts_failed | length }}
+
+          --- Succeeded Hosts ---
+          {% for host in ansible_play_hosts_ok %}
+          - {{ host }}
+          {% endfor %}
+
+          --- Failed Hosts ---
+          {% for host in ansible_play_hosts_failed %}
+          - {{ host }}
+          {% endfor %}
+
+      # These variables should be defined in your inventory, a vars file,
+      # or passed on the command line.
+      vars:
+        smtp_server: "smtp.example.com"
+        smtp_port: 587
+        email_user: "ansible@example.com"
+        email_password: "YourEmailPassword"
+        email_to: "admin@example.com"
+        email_from: "ansible-reporter@example.com"
