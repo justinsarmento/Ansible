@@ -5,3 +5,14 @@ collections:
     verstion: "2.5.0"
   - name: ansible.utils
     version: "2.5.0"
+  # Required for Wake-on-LAN (wakeonlan) and email (mail) modules
+  - name: community.general
+    version: ">=6.0.0" # Specify a version range for stability
+
+  # Required for managing MikroTik RouterOS devices
+  - name: community.routeros
+    version: ">=2.0.0"
+
+  # Required for managing Windows hosts (win_ping, win_updates)
+  - name: ansible.windows
+    version: ">=1.12.0"
